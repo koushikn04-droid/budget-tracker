@@ -19,9 +19,14 @@ db.init_db()
 if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
 
-# Credentials
-VALID_USERNAME = "koushik"
-VALID_PASSWORD = "Kk123@004"
+# Load Credentials from Streamlit Secrets
+try:
+    VALID_USERNAME = st.secrets["auth"]["username"]
+    VALID_PASSWORD = st.secrets["auth"]["password"]
+except KeyError:
+    # Fallback for local development
+    VALID_USERNAME = "koushik"
+    VALID_PASSWORD = "Kk123@004"
 
 # Login page function
 def show_login_page():
