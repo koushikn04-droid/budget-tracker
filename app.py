@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime, date
 import database as db
+import io
 
 # Page configuration
 st.set_page_config(
@@ -401,21 +402,6 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# Session state initialization
-if 'expenses' not in st.session_state:
-    st.session_state.expenses = db.get_expenses()
-if 'budget' not in st.session_state:
-    st.session_state.budget = db.get_budget()
-if 'loading' not in st.session_state:
-    st.session_state.loading = False
-
-# Refresh data
-st.session_state.expenses = db.get_expenses()
-st.session_state.budget = db.get_budget()
-
-income = st.session_state.budget['income']
-savings = st.session_state.budget['savings']
-
 # Add logout button in sidebar
 with st.sidebar:
     st.markdown("---")
@@ -423,6 +409,13 @@ with st.sidebar:
         st.session_state.logged_in = False
         st.session_state.clear()
         st.rerun()
+
+# Load FRESH data from database EVERY time app reruns
+budget_data = db.get_budget()
+expenses_data = db.get_expenses()
+
+income = budget_data['income']
+savings = budget_data['savings']
 
 # Title and Header
 st.markdown("""
@@ -451,8 +444,6 @@ with col1:
         new_income = max(0.0, new_income)
         if new_income != income:
             db.update_income(new_income)
-            st.session_state.budget['income'] = new_income
-            st.success("✓ Income updated!", icon="✅")
     except ValueError:
         st.error("❌ Please enter a valid number")
         new_income = income
@@ -472,8 +463,6 @@ with col2:
         new_savings = max(0.0, new_savings)
         if new_savings != savings:
             db.update_savings(new_savings)
-            st.session_state.budget['savings'] = new_savings
-            st.success("✓ Savings updated!", icon="✅")
     except ValueError:
         st.error("❌ Please enter a valid number")
         new_savings = savings
@@ -481,13 +470,9 @@ with col2:
 
 st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 
-# Refresh data after potential changes
-st.session_state.expenses = db.get_expenses()
-st.session_state.budget = db.get_budget()
-
-# Calculate values using updated values
+# Calculate values using fresh data
 available_balance = new_income - new_savings
-total_expenses = sum(float(exp['amount']) for exp in st.session_state.expenses)
+total_expenses = sum(float(exp['amount']) for exp in expenses_data)
 remaining = available_balance - total_expenses
 
 # Expenses Section
@@ -497,18 +482,15 @@ col_add = st.columns([6, 1])[1]
 with col_add:
     if st.button("➕ Add Expense", use_container_width=True, help="Add a new expense entry"):
         today = datetime.now().strftime('%Y-%m-%d')
-        new_id = db.add_expense(today, '', 0)
-        st.session_state.expenses = db.get_expenses()
+        db.add_expense(today, '', 0)
         st.rerun()
 
 st.markdown("")
 
 # Display expenses as editable rows
-if st.session_state.expenses:
-    for idx, expense in enumerate(st.session_state.expenses):
+if expenses_data:
+    for idx, expense in enumerate(expenses_data):
         with st.container():
-            # st.markdown('<div class="expense-row">', unsafe_allow_html=True)
-            
             col1, col2, col3, col4 = st.columns([2, 3, 2, 1], gap="small")
             
             with col1:
@@ -534,8 +516,7 @@ if st.session_state.expenses:
                     value=str(float(expense['amount'])),
                     key=f"amount_{expense['id']}",
                     label_visibility="collapsed",
-                    placeholder="0.00",
-                    on_change=lambda: None
+                    placeholder="0.00"
                 )
                 try:
                     new_amount = float(amount_input) if amount_input else 0.0
@@ -546,7 +527,6 @@ if st.session_state.expenses:
             with col4:
                 if st.button("🗑️", key=f"delete_{expense['id']}", help="Delete this expense"):
                     db.delete_expense(expense['id'])
-                    st.session_state.expenses = db.get_expenses()
                     st.rerun()
             
             # Update expense if any value changed
@@ -559,7 +539,6 @@ if st.session_state.expenses:
                     new_desc,
                     new_amount
                 )
-                st.session_state.expenses = db.get_expenses()
                 st.rerun()
 
 else:
@@ -611,15 +590,21 @@ col1, col2 = st.columns(2, gap="large")
 
 with col1:
     # Export as Excel
-    df = pd.DataFrame(st.session_state.expenses)
-    if not df.empty:
+    if expenses_data:
+        df = pd.DataFrame(expenses_data)
         df['date'] = pd.to_datetime(df['date'])
         df = df.sort_values('date', ascending=False)
         
-        # Create Excel export
-        import io
+        # Create summary
+        summary_df = pd.DataFrame({
+            'Category': ['Monthly Income', 'Monthly Savings', 'Available Balance', 'Total Expenses', 'Remaining Balance'],
+            'Amount': [new_income, new_savings, available_balance, total_expenses, remaining]
+        })
+        
+        # Create Excel export with multiple sheets
         buffer = io.BytesIO()
         with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+            summary_df.to_excel(writer, index=False, sheet_name='Summary')
             df.to_excel(writer, index=False, sheet_name='Expenses')
         excel_data = buffer.getvalue()
         
@@ -638,11 +623,6 @@ with col2:
     if st.button("🗑️ Clear All Data", use_container_width=True, type="secondary"):
         # Clear all data from database
         db.delete_all_data()
-        # Clear session state
-        st.session_state.clear()
-        # Reinitialize session state
-        st.session_state.expenses = []
-        st.session_state.budget = {'income': 0, 'savings': 0}
         st.success("✅ All data has been permanently deleted!")
         st.rerun()
 
